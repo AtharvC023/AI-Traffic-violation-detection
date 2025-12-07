@@ -2,10 +2,13 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 import cv2
+import numpy as np
 import os
 import shutil
+import time
 from PIL import Image
 from datetime import datetime
+from license_plate_recognition import LicensePlateRecognizer, process_frame_with_plates
 
 st.set_page_config(
     page_title="AI Traffic Monitor",
@@ -363,90 +366,71 @@ def main():
         st.metric("Session Active", "✅ Online")
     
     if page == "📊 Dashboard":
-        st.markdown("## 📊 Analytics Dashboard")
+        st.markdown("## 📊 Smart Analytics Dashboard")
         
         df = load_violations()
         
+        # Report generation section
         if not df.empty:
-            # Key metrics with modern cards
+            st.markdown("### 📄 Generate Analysis Report")
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                st.markdown("""
-                <div class="metric-card">
-                    <h3>🚨 Total Violations</h3>
-                    <h2 style="color: #ef4444;">{}</h2>
-                </div>
-                """.format(len(df)), unsafe_allow_html=True)
-
+                if st.button("📊 JSON Report", use_container_width=True):
+                    from report_generator import ViolationReportGenerator
+                    generator = ViolationReportGenerator()
+                    result = generator.generate_report('json')
+                    if result['status'] == 'success':
+                        st.success(f"✅ {result['message']}")
+                        with open(result['file_path'], 'rb') as f:
+                            st.download_button(
+                                "⬇️ Download JSON",
+                                f.read(),
+                                file_name=os.path.basename(result['file_path']),
+                                mime="application/json"
+                            )
+            
             with col2:
-                today_count = len(df[df['timestamp'].str.contains(pd.Timestamp.now().strftime('%Y-%m-%d'))])
-                st.markdown("""
-                <div class="metric-card">
-                    <h3>📅 Today's Count</h3>
-                    <h2 style="color: #3b82f6;">{}</h2>
-                </div>
-                """.format(today_count), unsafe_allow_html=True)
-
+                if st.button("📋 CSV Report", use_container_width=True):
+                    from report_generator import ViolationReportGenerator
+                    generator = ViolationReportGenerator()
+                    result = generator.generate_report('csv')
+                    if result['status'] == 'success':
+                        st.success(f"✅ {result['message']}")
+                        with open(result['file_path'], 'rb') as f:
+                            st.download_button(
+                                "⬇️ Download CSV",
+                                f.read(),
+                                file_name=os.path.basename(result['file_path']),
+                                mime="text/csv"
+                            )
+            
             with col3:
-                most_common = df['violation_type'].mode().iloc[0] if not df.empty else "None"
-                st.markdown("""
-                <div class="metric-card">
-                    <h3>🔥 Most Common</h3>
-                    <h2 style="color: #10b981;">{}</h2>
-                </div>
-                """.format(most_common.split('(')[0] if '(' in most_common else most_common), unsafe_allow_html=True)
-
+                if st.button("📝 Text Report", use_container_width=True):
+                    from report_generator import ViolationReportGenerator
+                    generator = ViolationReportGenerator()
+                    result = generator.generate_report('txt')
+                    if result['status'] == 'success':
+                        st.success(f"✅ {result['message']}")
+                        with open(result['file_path'], 'rb') as f:
+                            st.download_button(
+                                "⬇️ Download TXT",
+                                f.read(),
+                                file_name=os.path.basename(result['file_path']),
+                                mime="text/plain"
+                            )
+            
             with col4:
-                unique_locations = df['location'].nunique() if 'location' in df.columns else 1
-                st.markdown("""
-                <div class="metric-card">
-                    <h3>📍 Locations</h3>
-                    <h2 style="color: #8b5cf6;">{}</h2>
-                </div>
-                """.format(unique_locations), unsafe_allow_html=True)
+                st.metric("Total Violations", len(df))
             
-            st.markdown("<br>", unsafe_allow_html=True)
-            
-            # Recent violations with modern styling
-            st.markdown("""
-            <div class="stats-container">
-                <h3>📋 Recent Violations</h3>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Display recent violations in cards
-            for _, row in df.head(5).iterrows():
-                violation_type = row['violation_type'].split('(')[0].strip()
-                timestamp = row['timestamp'][:19] if len(row['timestamp']) > 19 else row['timestamp']
-                
-                st.markdown("""
-                <div class="violation-card">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div>
-                            <h4 style="margin: 0; color: #fca5a5;">🚨 {}</h4>
-                            <p style="margin: 0; color: #fecaca;">📅 {}</p>
-                        </div>
-                        <div style="text-align: right;">
-                            <p style="margin: 0; font-weight: bold; color: #fef2f2;">🚗 {}</p>
-                            <p style="margin: 0; color: #fecaca;">📍 {}</p>
-                        </div>
-                    </div>
-                </div>
-                """.format(
-                    violation_type,
-                    timestamp,
-                    row.get('vehicle_id', 'Unknown'),
-                    row.get('location', 'Unknown')
-                ), unsafe_allow_html=True)
+            st.markdown("---")
         
+        if not df.empty:
+            from violation_display import display_violations_summary
+            display_violations_summary(df)
         else:
-            st.markdown("""
-            <div class="success-card">
-                <h3 style="color: #bbf7d0;">✅ No Violations Detected</h3>
-                <p style="color: #d1fae5;">Great! No traffic violations have been recorded yet. Upload a video or image to start monitoring.</p>
-            </div>
-            """, unsafe_allow_html=True)
+            from violation_display import display_violations_summary
+            display_violations_summary(df)
     
     elif page == "📊 Analytics":
         from modern_dashboard import show_advanced_analytics, show_system_health
@@ -500,6 +484,53 @@ def main():
                         processor.process_video(f"data/samples/{uploaded_file.name}")
                     
                     st.success("✅ Analysis complete!")
+                    
+                    # Generate report after analysis
+                    st.markdown("### 📄 Download Analysis Report")
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        if st.button("📊 Download JSON", use_container_width=True):
+                            from report_generator import ViolationReportGenerator
+                            generator = ViolationReportGenerator()
+                            result = generator.generate_report('json')
+                            if result['status'] == 'success':
+                                with open(result['file_path'], 'rb') as f:
+                                    st.download_button(
+                                        "⬇️ JSON Report",
+                                        f.read(),
+                                        file_name=os.path.basename(result['file_path']),
+                                        mime="application/json"
+                                    )
+                    
+                    with col2:
+                        if st.button("📋 Download CSV", use_container_width=True):
+                            from report_generator import ViolationReportGenerator
+                            generator = ViolationReportGenerator()
+                            result = generator.generate_report('csv')
+                            if result['status'] == 'success':
+                                with open(result['file_path'], 'rb') as f:
+                                    st.download_button(
+                                        "⬇️ CSV Report",
+                                        f.read(),
+                                        file_name=os.path.basename(result['file_path']),
+                                        mime="text/csv"
+                                    )
+                    
+                    with col3:
+                        if st.button("📝 Download Text", use_container_width=True):
+                            from report_generator import ViolationReportGenerator
+                            generator = ViolationReportGenerator()
+                            result = generator.generate_report('txt')
+                            if result['status'] == 'success':
+                                with open(result['file_path'], 'rb') as f:
+                                    st.download_button(
+                                        "⬇️ Text Report",
+                                        f.read(),
+                                        file_name=os.path.basename(result['file_path']),
+                                        mime="text/plain"
+                                    )
+                    
                     st.balloons()
                     st.rerun()
     
@@ -539,8 +570,8 @@ def main():
                 st.info(f"... and {len(uploaded_files) - 4} more images")
             
             if st.button("🔍 Analyze All Images", use_container_width=True):
-                from image_processor import ImageViolationProcessor
-                processor = ImageViolationProcessor()
+                import easyocr
+                reader = easyocr.Reader(['en'])
                 
                 results = []
                 progress_bar = st.progress(0)
@@ -551,48 +582,76 @@ def main():
                     with open(input_path, "wb") as f:
                         f.write(uploaded_file.getbuffer())
                     
-                    # Process image
-                    output_path = f"outputs/violations/analyzed_{uploaded_file.name}"
-                    annotated_image, violations = processor.process_image(input_path, output_path)
+                    # Read image
+                    image = cv2.imread(input_path)
+                    
+                    # Extract all text using EasyOCR
+                    ocr_results = reader.readtext(image)
+                    
+                    # Filter for potential license plates (alphanumeric, 4+ chars)
+                    extracted_text = []
+                    for (bbox, text, confidence) in ocr_results:
+                        text = text.strip().replace(' ', '')
+                        if len(text) >= 4 and confidence > 0.3:
+                            extracted_text.append({
+                                'text': text,
+                                'confidence': confidence,
+                                'bbox': bbox
+                            })
+                    
+                    # Draw bounding boxes on image
+                    annotated_image = image.copy()
+                    for item in extracted_text:
+                        bbox = item['bbox']
+                        pts = np.array([[int(x), int(y)] for x, y in bbox], np.int32)
+                        cv2.polylines(annotated_image, [pts], True, (0, 255, 0), 2)
+                        cv2.putText(annotated_image, item['text'], (pts[0][0], pts[0][1]-10), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                     
                     results.append({
                         'filename': uploaded_file.name,
-                        'violations': violations,
-                        'annotated_image': annotated_image,
-                        'output_path': output_path
+                        'extracted_text': extracted_text,
+                        'annotated_image': annotated_image
                     })
                     
                     progress_bar.progress((i + 1) / len(uploaded_files))
                 
+                # Store results in session state
+                st.session_state.image_analysis_results = results
                 st.success(f"✅ Processed {len(uploaded_files)} images!")
-                
-                # Display results
-                total_violations = sum(len(result['violations']) for result in results)
-                st.metric("Total Violations Found", total_violations)
-                
-                for result in results:
-                    with st.expander(f"📷 {result['filename']} - {len(result['violations'])} violations", expanded=True):
-                        col1, col2 = st.columns([2, 1])
-                        
-                        with col1:
-                            if result['annotated_image'] is not None:
-                                st.image(result['annotated_image'], 
-                                        caption=f"Analyzed: {result['filename']}", 
-                                        channels="BGR", 
-                                        use_container_width=True)
-                        
-                        with col2:
-                            st.subheader("🚨 Violations Detected")
-                            if result['violations']:
-                                for i, violation in enumerate(result['violations'], 1):
-                                    st.write(f"**{i}. {violation['type'].replace('_', ' ').title()}**")
-                                    st.write(f"Vehicle: {violation['vehicle_type'].title()}")
-                                    st.write(f"Confidence: {violation['confidence']:.1%}")
-                                    st.write(f"Description: {violation['description']}")
-                                    st.write("---")
-                            else:
-                                st.info("No violations detected in this image")
-                
+        
+        # Display results from session state
+        if hasattr(st.session_state, 'image_analysis_results') and st.session_state.image_analysis_results:
+            results = st.session_state.image_analysis_results
+            
+            # Display results
+            total_text = sum(len(result['extracted_text']) for result in results)
+            st.metric("Total Text Elements Found", total_text)
+            
+            for result in results:
+                with st.expander(f"📷 {result['filename']} - {len(result['extracted_text'])} text elements", expanded=True):
+                    col1, col2 = st.columns([2, 1])
+                    
+                    with col1:
+                        if result['annotated_image'] is not None:
+                            st.image(result['annotated_image'], 
+                                    caption=f"Analyzed: {result['filename']}", 
+                                    channels="BGR", 
+                                    use_container_width=True)
+                    
+                    with col2:
+                        st.subheader("🔤 Text Extracted")
+                        if result['extracted_text']:
+                            for i, text_item in enumerate(result['extracted_text'], 1):
+                                st.write(f"**{i}. {text_item['text']}**")
+                                st.write(f"Confidence: {text_item['confidence']:.1%}")
+                                st.write("---")
+                        else:
+                            st.info("No text detected in this image")
+            
+            # Clear results button
+            if st.button("🗑️ Clear Results", use_container_width=True):
+                del st.session_state.image_analysis_results
                 st.rerun()
         
         else:
@@ -625,53 +684,129 @@ def main():
             """, unsafe_allow_html=True)
     
     elif page == "🚨 View Violations":
-        st.markdown("## 🚨 Violation Details")
+        st.markdown("## 🚨 Violation Management System")
         
         df = load_violations()
+        
+        # Download reports section
         if not df.empty:
-            for _, row in df.iterrows():
-                with st.expander(f"{row['violation_type']} - {row['timestamp']}"):
-                    col1, col2 = st.columns([1, 2])
-                    
-                    with col1:
-                        if os.path.exists(row['image_path']):
-                            image = Image.open(row['image_path'])
-                            st.image(image, caption="Violation Evidence")
-                    
-                    with col2:
-                        st.write(f"**Type:** {row['violation_type']}")
-                        st.write(f"**Time:** {row['timestamp']}")
-                        st.write(f"**Vehicle ID:** {row['vehicle_id']}")
-                        if len(row) > 5:  # Check if location columns exist
-                            st.write(f"**📍 Location:** {row.get('location', 'Unknown')}")
-                            st.write(f"**🗺️ GPS:** {row.get('gps_coords', 'N/A')}")
-                            st.write(f"**📹 Camera:** {row.get('camera_id', 'Unknown')}")
-                            
-                            # Add Google Maps link
-                            if row.get('gps_coords') and row.get('gps_coords') != '0.0, 0.0':
-                                maps_url = f"https://maps.google.com/?q={row['gps_coords']}"
-                                st.markdown(f"[🗺️ View on Google Maps]({maps_url})")
+            st.markdown("### 📄 Download Violation Reports")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("📊 Download JSON Report", use_container_width=True):
+                    from report_generator import ViolationReportGenerator
+                    generator = ViolationReportGenerator()
+                    result = generator.generate_report('json')
+                    if result['status'] == 'success':
+                        with open(result['file_path'], 'rb') as f:
+                            st.download_button(
+                                "⬇️ Download JSON",
+                                f.read(),
+                                file_name=os.path.basename(result['file_path']),
+                                mime="application/json"
+                            )
+            
+            with col2:
+                if st.button("📋 Download CSV Report", use_container_width=True):
+                    from report_generator import ViolationReportGenerator
+                    generator = ViolationReportGenerator()
+                    result = generator.generate_report('csv')
+                    if result['status'] == 'success':
+                        with open(result['file_path'], 'rb') as f:
+                            st.download_button(
+                                "⬇️ Download CSV",
+                                f.read(),
+                                file_name=os.path.basename(result['file_path']),
+                                mime="text/csv"
+                            )
+            
+            with col3:
+                if st.button("📝 Download Text Report", use_container_width=True):
+                    from report_generator import ViolationReportGenerator
+                    generator = ViolationReportGenerator()
+                    result = generator.generate_report('txt')
+                    if result['status'] == 'success':
+                        with open(result['file_path'], 'rb') as f:
+                            st.download_button(
+                                "⬇️ Download TXT",
+                                f.read(),
+                                file_name=os.path.basename(result['file_path']),
+                                mime="text/plain"
+                            )
+            
+            st.markdown("---")
+        
+        from violation_display import display_violation_details_page
+        display_violation_details_page(df)
     
     elif page == "📺 Live Detection":
         st.markdown("## 📺 Live Detection System")
         
-        st.markdown("""
-        <div class="upload-section">
-            <h3>🎥 Live Analysis Setup</h3>
-            <p>Upload a video for real-time violation detection</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        uploaded_file = st.file_uploader(
-            "Choose video for live analysis", 
-            type=['mp4', 'avi', 'mov'],
-            help="Real-time processing with violation alerts"
+        # Detection source selection
+        detection_source = st.radio(
+            "Choose Detection Source:",
+            ["📹 Live Camera", "🎥 Upload Video"],
+            horizontal=True
         )
         
-        if uploaded_file:
+        if detection_source == "📹 Live Camera":
+            st.markdown("""
+            <div class="upload-section">
+                <h3>📹 Live Camera Detection</h3>
+                <p>Real-time traffic violation detection from your camera</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Simple camera controls
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🔴 Start Camera", use_container_width=True):
+                    st.session_state.camera_active = True
+            with col2:
+                if st.button("⏹️ Stop Camera", use_container_width=True):
+                    st.session_state.camera_active = False
+            
+            # Camera feed display
+            if st.session_state.get('camera_active', False):
+                from camera_detection import run_live_camera
+                
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    st.markdown("### 📹 Live Camera Feed")
+                
+                with col2:
+                    st.markdown("### 🚨 Live Violations")
+                
+                try:
+                    run_live_camera()
+                except Exception as e:
+                    st.error(f"❌ Camera error: {e}")
+                    st.session_state.camera_active = False
+            
+            else:
+                st.info("📹 Click 'Start Camera' to begin live detection")
+        
+        else:
+            st.markdown("""
+            <div class="upload-section">
+                <h3>🎥 Video Analysis Setup</h3>
+                <p>Upload a video for real-time violation detection</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            uploaded_file = st.file_uploader(
+                "Choose video for live analysis", 
+                type=['mp4', 'avi', 'mov'],
+                help="Real-time processing with violation alerts"
+            )
+        
+        if detection_source == "🎥 Upload Video" and uploaded_file:
             import tempfile
             import time
             from ultralytics import YOLO
+            from screenshot_handler import capture_violation_screenshot
             
             # Save uploaded file
             tfile = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
@@ -723,12 +858,14 @@ def main():
             
             if st.session_state.get('start_detection', False):
                 model = YOLO('yolov8n.pt')
+                plate_recognizer = LicensePlateRecognizer()
                 cap = cv2.VideoCapture(video_path)
                 
                 frame_count = 0
                 violations_found = 0
                 live_violations = []
                 violated_vehicles = set()  # Track vehicles that already have violations
+                detected_plates = []  # Track license plates
                 
                 progress_bar = st.progress(0)
                 total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -738,9 +875,13 @@ def main():
                     if not ret:
                         break
                     
-                    # Run detection with lower confidence for traffic lights
-                    results = model(frame, conf=0.3)  # Lower threshold
-                    annotated_frame = frame.copy()
+                    # Smart processing: resize frame for faster detection
+                    processing_frame = cv2.resize(frame, (640, 480))  # Smaller size = faster
+                    results = model(processing_frame, conf=0.35, device='cpu')  # Slightly higher confidence
+                    annotated_frame = frame.copy()  # Keep original size for display
+                    
+                    # Initialize violation detection flag
+                    violation_detected_this_frame = False
                     
                     # Draw detections and check violations
                     current_violations = 0
@@ -756,9 +897,16 @@ def main():
                         7: ('trucks', 'Truck', (255, 255, 0))
                     }
                     
+                    # Scale coordinates back to original frame size
+                    scale_x = frame.shape[1] / 640
+                    scale_y = frame.shape[0] / 480
+                    
                     for r in results:
                         for box in r.boxes:
+                            # Scale coordinates back to original size
                             x1, y1, x2, y2 = box.xyxy[0].int().tolist()
+                            x1, x2 = int(x1 * scale_x), int(x2 * scale_x)
+                            y1, y2 = int(y1 * scale_y), int(y2 * scale_y)
                             conf = float(box.conf)
                             cls = int(box.cls)
                             
@@ -838,6 +986,12 @@ def main():
                             cv2.putText(annotated_frame, "🚨 NO HELMET VIOLATION", (mx1, my1-10), 
                                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
                             
+                            violation_detected_this_frame = True
+                            
+                            # Capture screenshot for video upload detection
+                            from screenshot_handler import capture_violation_screenshot
+                            screenshot_path = capture_violation_screenshot(annotated_frame, 'No Helmet Violation', vehicle_id)
+                            
                             # Add to live violations list
                             live_violations.append({
                                 'frame': frame_count,
@@ -847,8 +1001,8 @@ def main():
                                 'time': datetime.now().strftime('%H:%M:%S')
                             })
 
-                            # Save to database
-                            save_violation_to_db('No Helmet Violation', vehicle_id, location="Live Detection")
+                            # Save to database with screenshot
+                            save_violation_to_db('No Helmet Violation', vehicle_id, screenshot_path, "Live Detection")
                     
                     # Check speeding violations (simplified for live detection)
                     if not hasattr(st.session_state, 'vehicle_positions'):
@@ -883,8 +1037,13 @@ def main():
                                             'time': datetime.now().strftime('%H:%M:%S')
                                         })
 
-                                        # Save to database
-                                        save_violation_to_db('Speeding Violation', vehicle_id, location="Live Detection")
+                                        violation_detected_this_frame = True
+                                        
+                                        # Capture screenshot
+                                        screenshot_path = capture_violation_screenshot(annotated_frame, 'Speeding Violation', vehicle_id)
+                                        
+                                        # Save to database with screenshot
+                                        save_violation_to_db('Speeding Violation', vehicle_id, screenshot_path, "Live Detection")
                             
                             st.session_state.vehicle_positions[vehicle_id] = (vehicle_center, frame_count)
                     
@@ -915,8 +1074,13 @@ def main():
                                         'time': datetime.now().strftime('%H:%M:%S')
                                     })
 
-                                    # Save to database
-                                    save_violation_to_db('Wrong Way Violation', vehicle_id, location="Live Detection")
+                                    violation_detected_this_frame = True
+                                    
+                                    # Capture screenshot
+                                    screenshot_path = capture_violation_screenshot(annotated_frame, 'Wrong Way Violation', vehicle_id)
+                                    
+                                    # Save to database with screenshot
+                                    save_violation_to_db('Wrong Way Violation', vehicle_id, screenshot_path, "Live Detection")
                     
                     # Check tailgating violations
                     all_vehicles = []
@@ -956,8 +1120,13 @@ def main():
                                         'time': datetime.now().strftime('%H:%M:%S')
                                     })
 
-                                    # Save to database
-                                    save_violation_to_db('Tailgating Violation', vehicle_id, location="Live Detection")
+                                    violation_detected_this_frame = True
+                                    
+                                    # Capture screenshot
+                                    screenshot_path = capture_violation_screenshot(annotated_frame, 'Tailgating Violation', vehicle_id)
+                                    
+                                    # Save to database with screenshot
+                                    save_violation_to_db('Tailgating Violation', vehicle_id, screenshot_path, "Live Detection")
                                     break
                     
                     # Check red light violations with improved detection
@@ -989,9 +1158,27 @@ def main():
                                         'time': datetime.now().strftime('%H:%M:%S')
                                     })
 
-                                    # Save to database
-                                    save_violation_to_db('Red Light Violation', vehicle_id, location="Live Detection")
+                                    violation_detected_this_frame = True
+                                    
+                                    # Capture screenshot
+                                    screenshot_path = capture_violation_screenshot(annotated_frame, 'Red Light Violation', vehicle_id)
+                                    
+                                    # Save to database with screenshot
+                                    save_violation_to_db('Red Light Violation', vehicle_id, screenshot_path, "Live Detection")
                                     break
+                    
+                    # License plate detection ONLY when violation detected
+                    if violation_detected_this_frame:
+                        plates_data = plate_recognizer.recognize_license_plate(frame)
+                        if plates_data:
+                            annotated_frame = plate_recognizer.draw_plates(annotated_frame, plates_data)
+                            for plate in plates_data:
+                                detected_plates.append({
+                                    'frame': frame_count,
+                                    'plate_number': plate['plate_number'],
+                                    'confidence': plate['confidence'],
+                                    'time': datetime.now().strftime('%H:%M:%S')
+                                })
                     
                     # Add violation alert
                     if current_violations > 0:
@@ -1018,6 +1205,16 @@ def main():
                         with col5:
                             st.metric("Current Violations", current_violations)
                         
+                        # License plates detected
+                        if detected_plates:
+                            st.write("**License Plates Detected:**")
+                            plate_cols = st.columns(min(len(detected_plates[-3:]), 3))
+                            for i, plate in enumerate(detected_plates[-3:]):
+                                with plate_cols[i]:
+                                    st.write(f"🚗 {plate['plate_number']}")
+                                    st.write(f"Frame: {plate['frame']}")
+                                    st.write(f"Time: {plate['time']}")
+                        
                         # Vehicle breakdown
                         if total_vehicles > 0:
                             st.write("**Vehicle Breakdown:**")
@@ -1030,19 +1227,60 @@ def main():
                                 st.write(f"🚌 Buses: {len(vehicles['buses'])}")
                             with vehicle_cols[3]:
                                 st.write(f"🚛 Trucks: {len(vehicles['trucks'])}")
+                        
+                        # Violation Categories (matching View Violations page)
+                        from violation_categories import VIOLATION_CATEGORIES, get_violation_category, get_violation_emoji
+                        
+                        violation_counts = {'CRITICAL': 0, 'HIGH': 0, 'MEDIUM': 0, 'LOW': 0}
+                        for violation in live_violations:
+                            category = get_violation_category(violation['type'])
+                            violation_counts[category] += 1
+                        
+                        st.write("**📊 Violation Categories:**")
+                        
+                        # Show category counters in columns
+                        cat_cols = st.columns(4)
+                        for i, (category, data) in enumerate(VIOLATION_CATEGORIES.items()):
+                            count = violation_counts[category]
+                            with cat_cols[i]:
+                                if count > 0:
+                                    st.write(f"{data['color']} **{category}**: {count}")
+                                else:
+                                    st.write(f"{data['color']} {category}: 0")
                     
-                    # Update violations display
+                    # Update violations display with categories
                     with violations_placeholder.container():
                         if live_violations:
-                            st.write(f"**Total Violations: {len(live_violations)}**")
-                            # Show last 5 violations
+                            from violation_categories import VIOLATION_CATEGORIES, get_violation_category, get_violation_emoji
+                            
+                            # Category counters
+                            violation_counts = {'CRITICAL': 0, 'HIGH': 0, 'MEDIUM': 0, 'LOW': 0}
+                            for violation in live_violations:
+                                category = get_violation_category(violation['type'])
+                                violation_counts[category] += 1
+                            
+                            st.write("**📊 Live Violation Categories**")
+                            for category, data in VIOLATION_CATEGORIES.items():
+                                count = violation_counts[category]
+                                if count > 0:
+                                    st.write(f"{data['color']} **{category}**: {count}")
+                            
+                            st.write("---")
+                            st.write(f"**🚨 Latest Violations ({len(live_violations)})**")
+                            
+                            # Show last 5 violations with categories
                             for violation in live_violations[-5:]:
-                                with st.expander(f"{violation['type']} - Frame {violation['frame']}", expanded=False):
-                                    st.write(f"**Vehicle:** {violation['vehicle']}")
-                                    st.write(f"**Confidence:** {violation['confidence']}")
+                                emoji = get_violation_emoji(violation['type'])
+                                category = get_violation_category(violation['type'])
+                                color = VIOLATION_CATEGORIES[category]['color']
+                                
+                                with st.expander(f"{color} {emoji} {violation['type']} - Frame {violation.get('frame', 'N/A')}", expanded=False):
+                                    st.write(f"**Priority:** {category}")
+                                    st.write(f"**Vehicle:** {violation.get('vehicle', 'Unknown')}")
+                                    st.write(f"**Confidence:** {violation.get('confidence', 'N/A')}")
                                     st.write(f"**Time:** {violation['time']}")
                         else:
-                            st.write("**No violations detected yet**")
+                            st.write("🟢 **No violations detected yet**")
                             st.info("Violations will appear here as they are detected in the video.")
                     
                     progress = frame_count / total_frames
@@ -1050,8 +1288,8 @@ def main():
                     
                     frame_count += 1
                     
-                    # Control playback speed (FPS)
-                    time.sleep(1.0 / speed)
+                    # Optimized playback speed
+                    time.sleep(max(0.01, 1.0 / speed))  # Minimum 0.01s delay
                     
                     # Check if stop was pressed
                     if st.session_state.get('stop_detection', False):
@@ -1072,7 +1310,7 @@ def main():
                 st.session_state.start_detection = False
                 st.session_state.stop_detection = False
         
-        else:
+        elif detection_source == "🎥 Upload Video" and not uploaded_file:
             st.markdown("""
             <div class="success-card">
                 <h3>📺 Live Detection Features</h3>
@@ -1082,6 +1320,7 @@ def main():
                         <ul>
                             <li>Red Light Violations</li>
                             <li>No Helmet Violations</li>
+                            <li>License Plate Recognition</li>
                             <li>Speeding Detection</li>
                             <li>Wrong Way Driving</li>
                         </ul>
@@ -1089,10 +1328,11 @@ def main():
                     <div>
                         <h4>📊 Live Features:</h4>
                         <ul>
-                            <li>Real-time Statistics</li>
-                            <li>Playback Controls</li>
+                            <li>Real-time Camera Feed</li>
+                            <li>Live Statistics</li>
                             <li>Violation Alerts</li>
                             <li>Frame Analysis</li>
+                            <li>Camera Controls</li>
                         </ul>
                     </div>
                 </div>

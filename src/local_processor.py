@@ -50,7 +50,9 @@ class LocalTrafficProcessor:
         cap.release()
         
     def detect_violations(self, frame, frame_num):
-        results = self.model(frame, conf=0.25)
+        # Use same processing as Live Detection
+        processing_frame = cv2.resize(frame, (640, 480))
+        results = self.model(processing_frame, conf=0.35, device='cpu')
         violations = []
         
         vehicles = {'cars': [], 'motorcycles': [], 'buses': [], 'trucks': []}
@@ -65,13 +67,21 @@ class LocalTrafficProcessor:
             7: 'trucks'     # truck
         }
         
+        # Scale coordinates back to original frame size
+        scale_x = frame.shape[1] / 640
+        scale_y = frame.shape[0] / 480
+        
         for r in results:
             for box in r.boxes:
                 cls = int(box.cls)
-                bbox = box.xyxy[0].tolist()
+                # Scale coordinates back to original size
+                x1, y1, x2, y2 = box.xyxy[0].int().tolist()
+                x1, x2 = int(x1 * scale_x), int(x2 * scale_x)
+                y1, y2 = int(y1 * scale_y), int(y2 * scale_y)
+                bbox = [x1, y1, x2, y2]
                 conf = float(box.conf)
                 
-                if cls in vehicle_classes and self.is_valid_vehicle(bbox, conf, cls):
+                if cls in vehicle_classes and self.is_valid_vehicle_detection(bbox, conf, cls):
                     vehicles[vehicle_classes[cls]].append({
                         'bbox': bbox,
                         'confidence': conf,
@@ -397,7 +407,7 @@ class LocalTrafficProcessor:
         
         return violations
     
-    def is_valid_vehicle(self, bbox, confidence, vehicle_class):
+    def is_valid_vehicle_detection(self, bbox, confidence, vehicle_class):
         """Validate if detection is actually a vehicle"""
         x1, y1, x2, y2 = bbox
         width = x2 - x1
@@ -469,18 +479,19 @@ class LocalTrafficProcessor:
         return False
     
     def save_violation(self, violation, frame):
-        timestamp = datetime.now().isoformat().replace(':', '-')  # Fix filename
+        timestamp = datetime.now().isoformat().replace(':', '-')
         image_path = f"outputs/violations/{timestamp}.jpg"
         
         os.makedirs('outputs/violations', exist_ok=True)
         
-        # Ensure frame is saved successfully
-        success = cv2.imwrite(image_path, frame)
+        # Create annotated frame with violation highlighted
+        annotated_frame = self.create_violation_screenshot(frame, violation)
+        
+        success = cv2.imwrite(image_path, annotated_frame)
         if not success:
             print(f"Failed to save image: {image_path}")
             return
         
-        # Enhanced database schema
         self.conn.execute(
             "INSERT INTO violations (timestamp, violation_type, image_path, vehicle_id, location, gps_coords, camera_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (timestamp, 
@@ -493,6 +504,26 @@ class LocalTrafficProcessor:
         )
         self.conn.commit()
         print(f"Violation saved: {violation['type']} ({violation.get('vehicle_type', 'unknown')}) at {timestamp}")
+    
+    def create_violation_screenshot(self, frame, violation):
+        """Create annotated screenshot highlighting the violation"""
+        annotated = frame.copy()
+        
+        if 'vehicle_position' in violation:
+            x1, y1, x2, y2 = [int(coord) for coord in violation['vehicle_position']]
+            
+            # Draw red rectangle around violating vehicle
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 0, 255), 4)
+            
+            # Add violation label
+            label = f"🚨 {violation['type'].replace('_', ' ').upper()}"
+            cv2.putText(annotated, label, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+            
+            # Add timestamp
+            info = f"Time: {datetime.now().strftime('%H:%M:%S')}"
+            cv2.putText(annotated, info, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        
+        return annotated
 
 # Usage
 if __name__ == "__main__":

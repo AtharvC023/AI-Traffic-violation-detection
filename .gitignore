@@ -46,10 +46,11 @@ venv.bak/
 ehthumbs.db
 Thumbs.db
 
-# Database files
+# Database files (keep sample structure)
 *.db
 *.sqlite
 *.sqlite3
+!sample.db
 
 # Logs
 *.log
@@ -66,7 +67,13 @@ tmp/
 
 # Output directories
 outputs/
-data/samples/  # Keep structure but not large files
+data/samples/*.mp4
+data/samples/*.avi
+data/samples/*.mov
+# Keep sample images
+!data/samples/*.jpg
+!data/samples/*.jpeg
+!data/samples/*.png
 
 # Deployment
 .vercel
